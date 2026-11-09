@@ -41,7 +41,7 @@ stats.json 값으로 덮어쓰니 적지 않아도 된다.
 | 신호 (stats.json) | 어울리는 것 |
 |---|---|
 | 검증·완벽 범주 높음, Playwright·테스트 많음 | dog·owl, determined 눈, magnifier · shield · checklist |
-| `tool_calls_per_prompt` 높음 (지휘형) | headset · flag, 말 짧고 반말 많음이면 smirk |
+| `tool_calls_per_prompt` 높음 (크게 맡김) | headset · flag, 말 짧고 반말 많음이면 smirk |
 | 손수형 (도구 적음, Edit·Read 비중 큼) | hamster·otter, wrench · laptop |
 | 밤 비율 높음 | owl·ghost, sleepy 눈, nightcap · zzz · coffee |
 | 설명요청·호기심 높음 | rabbit·chick, sparkle 눈, book · lightbulb |

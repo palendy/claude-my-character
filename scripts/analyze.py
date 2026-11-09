@@ -9,6 +9,7 @@ the user's own prompts so the model can write a grounded personality.
 Usage: python3 analyze.py [--days N] [--out PATH] [--root ~/.claude]
 """
 import argparse
+import bisect
 import collections
 import datetime as dt
 import glob
@@ -79,12 +80,10 @@ def classify(text):
     return {k: sum(t.count(w) for w in ws) for k, ws in CATEGORIES.items()}
 
 
-TYPE_NAMES = {
-    "VCXD": "철벽 검증 지휘관", "VCXN": "새벽 감사관", "VCRD": "결과 검수 감독", "VCRN": "야간 품질 관제사",
-    "VHXD": "꼼꼼 장인 학자", "VHXN": "한밤의 연구원", "VHRD": "묵묵한 장인", "VHRN": "새벽 대장장이",
-    "FCXD": "질주하는 기획자", "FCXN": "야행성 탐험대장", "FCRD": "속전속결 사령관", "FCRN": "심야 돌격대장",
-    "FHXD": "호기심 해커", "FHXN": "올빼미 실험가", "FHRD": "번개 손코더", "FHRN": "심야 스피드러너",
-}
+# code letters: 말투 J/B · 말 길이 S/L · 일하는 방식 O/M · 시간 A/P
+TONE = {"JS": "또박또박", "JL": "정성 가득", "BS": "한마디 직진", "BL": "수다쟁이"}
+ROLE = {"OA": "아침 장인", "OP": "오후 장인", "MA": "아침 저글러", "MP": "오후 저글러"}
+TYPE_NAMES = {t[0] + t[1] + r[0] + r[1]: f"{tn} {rn}" for t, tn in TONE.items() for r, rn in ROLE.items()}
 TIERS = {1: "N", 2: "R", 3: "SR", 4: "SSR", 5: "UR"}
 
 
@@ -92,25 +91,50 @@ def clamp(x):
     return max(0.0, min(1.0, x))
 
 
-def dev_type(per100, interrupts_per100, tools_per_prompt, late_ratio):
-    """Same formula for everyone so colleagues can compare codes. value < .5 → left letter."""
-    careful = per100["검증"] + per100["완벽"]
-    hasty = per100["속도"] + interrupts_per100
-    vf = clamp(hasty / (careful + hasty)) if careful + hasty else 0.5
-    ch = clamp(1 - (tools_per_prompt - 3) / 17)  # 20+ tools per prompt → fully C, 3 or fewer → fully H
-    xr = clamp(1 - (per100["설명요청"] + per100["호기심"]) / 60)  # 30 per 100 prompts is the midpoint
-    dn = clamp(late_ratio / 0.3)  # 15% of prompts between 22:00 and 04:00 is the midpoint
+def dev_type(polite, banmal, short, long_, multi_ratio, median_hour):
+    """Same formula for everyone so colleagues can compare codes. value < .5 → left letter.
+
+    Each axis compares two habits of the same person (or a clock time), not keyword lists,
+    so the midpoint means the same thing for everyone.
+    """
+    jb = banmal / (polite + banmal) if polite + banmal else 0.5
+    sl = long_ / (short + long_) if short + long_ else 0.5
+    om = clamp(multi_ratio / 0.6)  # 30% of prompts sent while another session is running is the midpoint
+    ap = clamp((median_hour - 10) / 8)  # half of my prompts before 14:00 is the midpoint
+    hh = int(median_hour) % 24
     axes = [
-        {"letter": "V" if vf < .5 else "F", "left": "V 검증형", "right": "F 속도형", "value": round(vf, 2)},
-        {"letter": "C" if ch < .5 else "H", "left": "C 지휘형", "right": "H 손수형", "value": round(ch, 2)},
-        {"letter": "X" if xr < .5 else "R", "left": "X 설명형", "right": "R 결과형", "value": round(xr, 2)},
-        {"letter": "D" if dn < .5 else "N", "left": "D 낮형", "right": "N 밤형", "value": round(dn, 2)},
+        {"letter": "J" if jb < .5 else "B", "left": "J 존댓말파", "right": "B 반말파", "value": round(jb, 2),
+         "measure": f"끝맺음 존댓말 {polite}번 · 반말 {banmal}번"},
+        {"letter": "S" if sl < .5 else "L", "left": "S 한마디형", "right": "L 브리핑형", "value": round(sl, 2),
+         "measure": f"25자 이하 {short}번 · 100자 이상 {long_}번"},
+        {"letter": "O" if om < .5 else "M", "left": "O 한우물형", "right": "M 멀티형", "value": round(om, 2),
+         "measure": f"다른 대화를 돌리는 중에 보낸 말 {multi_ratio:.0%}"},
+        {"letter": "A" if ap < .5 else "P", "left": "A 오전형", "right": "P 오후형", "value": round(ap, 2),
+         "measure": f"말의 절반을 {hh}시 {int(median_hour % 1 * 60):02d}분까지 보냄"},
     ]
     code = "".join(a["letter"] for a in axes)
     sharp = sum(abs(a["value"] - .5) for a in axes) / len(axes) * 2  # 0 = balanced, 1 = extreme
     stars = 1 + round(sharp * 4)
     return {"code": code, "name": TYPE_NAMES[code], "axes": axes,
             "rarity": {"tier": TIERS[stars], "stars": stars, "sharpness": round(sharp, 2)}}
+
+
+def multi_ratio(prompts, window_min=10):
+    """Share of prompts sent while a different session also got a prompt within ±window."""
+    times = [p[0] for p in prompts]  # prompts are sorted by time
+    win = dt.timedelta(minutes=window_min)
+    hits = 0
+    for i, (when, _, sid, _) in enumerate(prompts):
+        lo = bisect.bisect_left(times, when - win)
+        hi = bisect.bisect_right(times, when + win)
+        hits += any(prompts[k][2] != sid for k in range(lo, hi))
+    return hits / len(prompts)
+
+
+def median_hour(prompts):
+    """Median clock time; the day starts at 05:00 so late-night work counts as the end of the day."""
+    hrs = sorted(((p[0].hour - 5) % 24) + 5 + p[0].minute / 60 for p in prompts)
+    return hrs[len(hrs) // 2]
 
 
 def iter_lines(path):
@@ -322,7 +346,7 @@ def main():
 
     # ---- talk style ----
     cat_tot = collections.Counter()
-    polite = banmal = q = ex = laugh = ell = emoji = thanks = short = 0
+    polite = banmal = q = ex = laugh = ell = emoji = thanks = short = short25 = long100 = 0
     words = collections.Counter()
     bigr = collections.Counter()
     shorts = collections.Counter()
@@ -339,6 +363,10 @@ def main():
         laugh += bool(LAUGH.search(t))
         ell += (".." in t or "…" in t)
         emoji += bool(EMOJI.search(t))
+        if len(t) <= 25:
+            short25 += 1
+        elif len(t) >= 100:
+            long100 += 1
         if len(t) <= 12:
             short += 1
             shorts[t.strip()] += 1
@@ -394,7 +422,7 @@ def main():
         phrase_counts[ph] = {"prompts": len(hits), "example": fmt(hits[-1], 100) if hits else None}
 
     out = {
-        "type_code": dev_type(per100, interrupts * 100 / n, sum(tools.values()) / n, late / n),
+        "type_code": dev_type(polite, banmal, short25, long100, multi_ratio(prompts), median_hour(prompts)),
         "phrase_counts": phrase_counts,
         "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "window_days": a.days or "all",
