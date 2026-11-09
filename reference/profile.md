@@ -1,7 +1,7 @@
 # profile.json 스키마
 
 렌더러(`scripts/render.py`)가 읽는 필드다. 없는 칸은 화면에서 빠진다. `type_code.code/name/axes`와 `rarity.tier/stars`는
-stats.json 값으로 덮어쓰니 적지 않아도 된다.
+렌더러가 공식으로 계산해 덮어쓰니 적지 않아도 된다.
 
 | 필드 | 뜻 | 화면 |
 |---|---|---|
@@ -10,6 +10,7 @@ stats.json 값으로 덮어쓰니 적지 않아도 된다.
 | `species` `eyes` `mouth` `accessories[≤4]` `colors` | 캐릭터 부품 (아래 표) | 캐릭터 |
 | `extra_svg` | (선택) 400×400 좌표계 SVG 조각 하나. 소품 표에 없는 걸 꼭 그려야 할 때만 | 캐릭터 |
 | `hashtags[≤4]` | `#` 없이 | 첫 화면 |
+| `work_labels` | `samples.random` 순서대로 업무 `W`/딴짓 `D` 한 글자씩. 길이가 다르면 렌더러가 멈춘다 | 유형 코드 |
 | `rarity.reason` | 이 등급인 이유, 숫자로 | 첫 화면 |
 | `type_code.summary` | 유형 한두 문장 | 유형 칸 |
 | `wrapped_title`, `wrapped[≤6]` `{big,label,comment}` | 연말결산식 큰 숫자. `big`이 숫자로 시작하면 올라가는 애니메이션 | 숫자 칸 |
@@ -23,7 +24,7 @@ stats.json 값으로 덮어쓰니 적지 않아도 된다.
 | `badges[4~6]` `{icon(이모지),name(9자 안),desc}` | 업적. 카드엔 앞 3개 | 배지 · 카드 |
 | `best_match`, `worst_match` | `{name,why,species,eyes,mouth,accessories,colors}` 가상 동료 | 궁합 칸 |
 | `claude_says` | Claude가 건네는 한마디, 3~4문장, 다정하게 | 마지막 칸 |
-| `roast` | 한 줄 놀림 (맛에 따라 세기 조절) | 마지막 칸 |
+| `roast` | 한 줄 놀림, 세게 | 마지막 칸 |
 | `fortune` | 내일의 개발 운세 한 줄 | 마지막 칸 |
 
 `colors`: `body` `belly` `accent` `cheek` `bg` `bg2` (모두 `#rrggbb`). 배경은 연한 파스텔, accent는 진하게 고른다.

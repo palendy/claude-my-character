@@ -80,8 +80,8 @@ def classify(text):
     return {k: sum(t.count(w) for w in ws) for k, ws in CATEGORIES.items()}
 
 
-# code letters: 말투 J/B · 말 길이 S/L · 일하는 방식 O/M · 시간 A/P
-TONE = {"JS": "또박또박", "JL": "정성 가득", "BS": "한마디 직진", "BL": "수다쟁이"}
+# code letters: 업무/딴짓 W/D · 말 길이 S/L · 일하는 방식 O/M · 시간 A/P
+TONE = {"WS": "칼같은", "WL": "꼼꼼한", "DS": "몰래 딴짓하는", "DL": "딴짓에 진심인"}
 ROLE = {"OA": "아침 장인", "OP": "오후 장인", "MA": "아침 저글러", "MP": "오후 저글러"}
 TYPE_NAMES = {t[0] + t[1] + r[0] + r[1]: f"{tn} {rn}" for t, tn in TONE.items() for r, rn in ROLE.items()}
 TIERS = {1: "N", 2: "R", 3: "SR", 4: "SSR", 5: "UR"}
@@ -91,22 +91,27 @@ def clamp(x):
     return max(0.0, min(1.0, x))
 
 
-def dev_type(polite, banmal, short, long_, multi_ratio, median_hour):
+def dev_type(offtask, short, long, multi_ratio, median_hour):
     """Same formula for everyone so colleagues can compare codes. value < .5 → left letter.
 
-    Each axis compares two habits of the same person (or a clock time), not keyword lists,
-    so the midpoint means the same thing for everyone.
+    `offtask` is (off-task, labelled) counts over samples.random, labelled by Claude in profile.json
+    (`work_labels`); None until then, which leaves the first letter as "?".
+    Each axis compares two habits of the same person (or a clock time), not keyword lists.
     """
-    jb = banmal / (polite + banmal) if polite + banmal else 0.5
-    sl = long_ / (short + long_) if short + long_ else 0.5
+    sl = long / (short + long) if short + long else 0.5
     om = clamp(multi_ratio / 0.6)  # 30% of prompts sent while another session is running is the midpoint
     ap = clamp((median_hour - 10) / 8)  # half of my prompts before 14:00 is the midpoint
     hh = int(median_hour) % 24
+    if offtask and offtask[1]:
+        wd = clamp(offtask[0] / offtask[1] / 0.4)  # one prompt in five off-task is the midpoint
+        first = {"letter": "W" if wd < .5 else "D", "value": round(wd, 2),
+                 "measure": f"무작위로 뽑은 말 {offtask[1]}개 중 딴짓 {offtask[0]}개"}
+    else:
+        first = {"letter": "?", "value": 0.5, "measure": "아직 업무/딴짓 표시 전"}
     axes = [
-        {"letter": "J" if jb < .5 else "B", "left": "J 존댓말파", "right": "B 반말파", "value": round(jb, 2),
-         "measure": f"끝맺음 존댓말 {polite}번 · 반말 {banmal}번"},
+        dict(first, left="W 업무형", right="D 딴짓형"),
         {"letter": "S" if sl < .5 else "L", "left": "S 한마디형", "right": "L 브리핑형", "value": round(sl, 2),
-         "measure": f"25자 이하 {short}번 · 100자 이상 {long_}번"},
+         "measure": f"25자 이하 {short}번 · 100자 이상 {long}번"},
         {"letter": "O" if om < .5 else "M", "left": "O 한우물형", "right": "M 멀티형", "value": round(om, 2),
          "measure": f"다른 대화를 돌리는 중에 보낸 말 {multi_ratio:.0%}"},
         {"letter": "A" if ap < .5 else "P", "left": "A 오전형", "right": "P 오후형", "value": round(ap, 2),
@@ -115,7 +120,7 @@ def dev_type(polite, banmal, short, long_, multi_ratio, median_hour):
     code = "".join(a["letter"] for a in axes)
     sharp = sum(abs(a["value"] - .5) for a in axes) / len(axes) * 2  # 0 = balanced, 1 = extreme
     stars = 1 + round(sharp * 4)
-    return {"code": code, "name": TYPE_NAMES[code], "axes": axes,
+    return {"code": code, "name": TYPE_NAMES.get(code, ""), "axes": axes,
             "rarity": {"tier": TIERS[stars], "stars": stars, "sharpness": round(sharp, 2)}}
 
 
@@ -375,6 +380,8 @@ def main():
         bigr.update(" ".join(toks[i : i + 2]) for i in range(len(toks) - 1))
 
     per100 = {k: round(v * 100 / n, 1) for k, v in cat_tot.items()}
+    type_inputs = {"short": short25, "long": long100, "multi_ratio": round(multi_ratio(prompts), 3),
+                   "median_hour": round(median_hour(prompts), 3)}
 
     # ---- facets / session-meta (from /insights cache, optional) ----
     facets = collections.defaultdict(collections.Counter)
@@ -422,7 +429,8 @@ def main():
         phrase_counts[ph] = {"prompts": len(hits), "example": fmt(hits[-1], 100) if hits else None}
 
     out = {
-        "type_code": dev_type(polite, banmal, short25, long100, multi_ratio(prompts), median_hour(prompts)),
+        "type_inputs": type_inputs,
+        "type_code": dev_type(None, **type_inputs),
         "phrase_counts": phrase_counts,
         "generated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "window_days": a.days or "all",

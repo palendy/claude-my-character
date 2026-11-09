@@ -586,15 +586,26 @@ def num_html(v):
 
 
 def merge_fixed(p, s):
-    """Type code and rarity come from the shared formula in stats.json, never from the model."""
-    st = s.get("type_code") or {}
-    if st.get("code"):
-        tc = dict(p.get("type_code") or {})
-        tc.update(code=st["code"], name=st["name"], axes=st["axes"])
-        p["type_code"] = tc
-        r = dict(p.get("rarity") or {})
-        r.update(tier=st["rarity"]["tier"], stars=st["rarity"]["stars"])
-        p["rarity"] = r
+    """Type code and rarity come from the shared formula, never from the model.
+
+    The model only labels samples.random as work/off-task (`work_labels`, one W or D per sample);
+    the off-task share is counted here and fed to the same formula as everyone else.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from analyze import dev_type
+
+    labels = "".join(str(p.get("work_labels") or "").split()).upper()
+    want = len((s.get("samples") or {}).get("random") or [])
+    if len(labels) != want or set(labels) - {"W", "D"}:
+        raise SystemExit(f"profile.json의 work_labels는 samples.random {want}개마다 W(업무)나 D(딴짓) 한 글자여야 합니다 "
+                         f"(지금 {len(labels)}글자)")
+    st = dev_type((labels.count("D"), len(labels)), **s["type_inputs"])
+    tc = dict(p.get("type_code") or {})
+    tc.update(code=st["code"], name=st["name"], axes=st["axes"])
+    p["type_code"] = tc
+    r = dict(p.get("rarity") or {})
+    r.update(tier=st["rarity"]["tier"], stars=st["rarity"]["stars"])
+    p["rarity"] = r
     return p
 
 
@@ -719,8 +730,9 @@ def main():
     p = merge_fixed(json.load(open(a.profile)), s)
     out = a.out or os.path.join(os.path.expanduser("~/내캐릭터"), f"내캐릭터-{dt.date.today():%Y%m%d}.html")
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    open(out, "w").write(page(p, s))
-    open(os.path.splitext(out)[0] + "-card.svg", "w").write(card_svg(p, s))
+    html, card = page(p, s), card_svg(p, s)  # build both before opening, so a failure never blanks an old result
+    open(out, "w").write(html)
+    open(os.path.splitext(out)[0] + "-card.svg", "w").write(card)
     print(out)
 
 
